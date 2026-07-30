@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
-
+from pathlib import Path
+import logging
 
 class RiskMetrics:
     """
@@ -96,20 +97,78 @@ class RiskMetrics:
                 round(self.historical_var(returns) * 100, 2)
         }
 
+class RiskSummaryGenerator:
+    """
+    Generate a risk summary report for all stocks in data/raw.
+    """
+
+    def __init__(
+        self,
+        raw_data_path="data/raw",
+        output_path="data/processed/risk_summary.csv"
+    ):
+        self.raw_data_path = Path(raw_data_path)
+        self.output_path = Path(output_path)
+        self.engine = RiskMetrics()
+
+    def generate_summary(self):
+        """
+        Read every stock CSV, calculate risk metrics,
+        and save them into a single CSV.
+        """
+
+        summary = []
+
+        csv_files = sorted(self.raw_data_path.glob("*.csv"))
+
+        if not csv_files:
+            print("No CSV files found.")
+            return
+
+        for file in csv_files:
+
+            try:
+                df = pd.read_csv(file)
+
+                report = self.engine.summarize(df["close"])
+
+                report["Stock"] = file.stem
+
+                summary.append(report)
+
+                print(f"Processed {file.stem}")
+
+            except Exception as e:
+                print(f"Error processing {file.name}: {e}")
+
+        summary_df = pd.DataFrame(summary)
+
+        columns = [
+            "Stock",
+            "Total Return (%)",
+            "CAGR (%)",
+            "Annual Volatility (%)",
+            "Sharpe Ratio",
+            "Maximum Drawdown (%)",
+            "95% Daily VaR (%)"
+        ]
+
+        summary_df = summary_df[columns]
+
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        summary_df.to_csv(self.output_path, index=False)
+
+        print("\nRisk summary saved successfully!")
+        print(self.output_path)
+
+        return summary_df
 
 if __name__ == "__main__":
 
-    df = pd.read_csv("data/raw/RELIANCE.csv")
+    generator = RiskSummaryGenerator()
 
-    engine = RiskMetrics()
+    report = generator.generate_summary()
 
-    report = engine.summarize(df["close"])
-
-    print("\n" + "=" * 40)
-    print("RELIANCE RISK REPORT")
-    print("=" * 40)
-
-    for metric, value in report.items():
-        print(f"{metric:<28} {value}")
-
-    print("=" * 40)
+    print("\n")
+    print(report)
