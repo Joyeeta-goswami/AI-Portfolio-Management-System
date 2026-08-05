@@ -1,3 +1,5 @@
+from unittest import result
+
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -64,7 +66,181 @@ class MarkowitzOptimizer:
        print("\nAnnualized Covariance Matrix")
        print("-" * 35)
        print(self.covariance_matrix)
+    def portfolio_return(self, weights):
+        """
+        Calculate the expected annual portfolio return.
+        """
 
+        return np.dot(
+            weights,
+            self.expected_returns
+        )
+    def portfolio_risk(self, weights):
+        """
+        Calculate annual portfolio volatility.
+        """
+
+        return np.sqrt(
+        np.dot(
+            weights.T,
+            np.dot(
+                self.covariance_matrix,
+                weights
+            )
+        )
+    ) 
+    def portfolio_sharpe_ratio(self, weights):
+        """
+        Calculate the annualized Sharpe Ratio.
+        """
+
+        portfolio_return = self.portfolio_return(weights)
+
+        portfolio_risk = self.portfolio_risk(weights)
+
+        if portfolio_risk == 0:
+            return 0
+
+        return (
+        portfolio_return - self.risk_free_rate
+    ) / portfolio_risk
+    def optimization_constraints(self):
+        """
+        Define portfolio constraints and bounds.
+        """
+
+        num_assets = len(self.expected_returns)
+
+        constraints = (
+        {
+            "type": "eq",
+            "fun": lambda weights: np.sum(weights) - 1
+        },
+    )
+
+        bounds = tuple(
+        (0, 1)
+        for _ in range(num_assets)
+    )
+
+        return constraints, bounds
+    def maximum_sharpe_portfolio(self):
+        """
+        Find the portfolio with the maximum Sharpe Ratio.
+        """
+
+        num_assets = len(self.expected_returns)
+
+        initial_weights = np.array(
+        [1 / num_assets] * num_assets
+    )
+
+        constraints, bounds = self.optimization_constraints()
+
+        result = minimize(
+        fun=lambda weights: -self.portfolio_sharpe_ratio(weights),
+        x0=initial_weights,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=constraints
+    )
+
+        return result
+
+    def minimum_variance_portfolio(self):
+            """
+            Find the minimum variance portfolio.
+            """
+    
+            num_assets = len(self.expected_returns)
+    
+            initial_weights = np.array(
+            [1 / num_assets] * num_assets
+        )
+    
+            constraints, bounds = self.optimization_constraints()
+    
+            result = minimize(
+            fun=self.portfolio_risk,
+            x0=initial_weights,
+            method="SLSQP",
+            bounds=bounds,
+            constraints=constraints
+        )
+    
+            return result
+        
+    def print_portfolio_summary(self, result):
+        """
+        Display a summary of the optimized portfolio.
+        """
+
+        weights = result.x
+
+        portfolio_return = self.portfolio_return(weights)
+
+        portfolio_risk = self.portfolio_risk(weights)
+
+        sharpe = self.portfolio_sharpe_ratio(weights)
+
+        print("\n" + "=" * 50)
+        print("        MAXIMUM SHARPE PORTFOLIO")
+        print("=" * 50)
+
+        print(f"\nExpected Annual Return : {portfolio_return*100:.2f}%")
+        print(f"Annual Volatility      : {portfolio_risk*100:.2f}%")
+        print(f"Sharpe Ratio           : {sharpe:.3f}")
+
+        print("\n" + "-" * 50)
+        print("Optimal Allocation")
+        print("-" * 50)
+
+        for stock, weight in zip(
+        self.expected_returns.index,
+        weights
+    ):
+
+            if weight > 0.0001:
+
+                print(f"{stock:<15}{weight*100:.2f}%")
+
+        print("=" * 50)   
+    def print_minimum_variance_summary(self, result):
+        """
+        Display the minimum variance portfolio.
+        """
+
+        weights = result.x
+
+        portfolio_return = self.portfolio_return(weights)
+
+        portfolio_risk = self.portfolio_risk(weights)
+
+        sharpe = self.portfolio_sharpe_ratio(weights)
+
+        print("\n" + "=" * 50)
+        print("        MINIMUM VARIANCE PORTFOLIO")
+        print("=" * 50)
+
+        print(f"\nExpected Annual Return : {portfolio_return*100:.2f}%")
+        print(f"Annual Volatility      : {portfolio_risk*100:.2f}%")
+        print(f"Sharpe Ratio           : {sharpe:.3f}")
+
+        print("\n" + "-" * 50)
+        print("Optimal Allocation")
+        print("-" * 50)
+
+        for stock, weight in zip(
+        self.expected_returns.index,
+        weights
+    ):
+
+            if weight > 0.0001:
+
+                print(f"{stock:<15}{weight*100:.2f}%")
+
+        print("=" * 50)
+    
 if __name__ == "__main__":
 
     optimizer = MarkowitzOptimizer()
@@ -74,3 +250,18 @@ if __name__ == "__main__":
     optimizer.calculate_expected_returns()
 
     optimizer.calculate_covariance_matrix()
+
+    # Equal allocation to every stock
+    weights = np.array(
+        [1 / len(optimizer.expected_returns)]
+        * len(optimizer.expected_returns)
+    )
+
+    portfolio_return = optimizer.portfolio_return(weights)
+    portfolio_risk = optimizer.portfolio_risk(weights)
+    portfolio_sharpe = optimizer.portfolio_sharpe_ratio(weights)
+    constraints, bounds = optimizer.optimization_constraints()
+    result = optimizer.maximum_sharpe_portfolio()
+    optimizer.print_portfolio_summary(result)
+    min_result = optimizer.minimum_variance_portfolio()
+    optimizer.print_minimum_variance_summary(min_result)
