@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from scipy.optimize import minimize
-
+import plotly.express as px
 
 class MarkowitzOptimizer:
     """
@@ -240,7 +240,285 @@ class MarkowitzOptimizer:
                 print(f"{stock:<15}{weight*100:.2f}%")
 
         print("=" * 50)
+    def generate_target_returns(
+    self,
+    num_portfolios=100):
+        """
+        Generate target returns for the Efficient Frontier.
+        """
+
+        minimum_return = self.expected_returns.min()
+
+        maximum_return = self.expected_returns.max()
+
+        target_returns = np.linspace(
+        minimum_return,
+        maximum_return,
+        num_portfolios
+    )
+
+        return target_returns
     
+    def optimize_target_return(
+    self,
+    target_return):
+        """
+        Find the minimum-risk portfolio for a given target return.
+        """
+
+        num_assets = len(self.expected_returns)
+
+        initial_weights = np.array(
+        [1 / num_assets] * num_assets)
+
+        constraints = (
+            {
+            "type": "eq",
+            "fun": lambda w: np.sum(w) - 1
+            },
+            {
+            "type": "eq",
+            "fun": lambda w:
+                self.portfolio_return(w) - target_return
+            })
+
+        bounds = tuple(
+        (0, 1)
+        for _ in range(num_assets)
+    )
+
+        result = minimize(
+        fun=self.portfolio_risk,
+        x0=initial_weights,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=constraints
+    )
+
+        return result
+    def efficient_frontier(self, num_portfolios=100):
+        """
+        Generate Efficient Frontier data.
+        """
+
+        target_returns = self.generate_target_returns(num_portfolios)
+
+        risks = []
+        returns = []
+
+        for target in target_returns:
+
+            result = self.optimize_target_return(target)
+
+            if result.success:
+
+                print(f"✓ Success: {target:.4f}")
+
+                risks.append(
+                self.portfolio_risk(result.x)
+            )
+
+                returns.append(
+                self.portfolio_return(result.x)
+            )
+
+            else:
+
+                print(f"✗ Failed: {target:.4f}")
+
+        frontier = pd.DataFrame({
+        "Risk": risks,
+        "Return": returns
+    })
+
+        return frontier
+    def plot_efficient_frontier(self, frontier):
+        """
+        Plot the Efficient Frontier.
+        """
+
+        fig = px.line(
+        frontier,
+        x="Risk",
+        y="Return",
+        title="Efficient Frontier",
+        markers=True
+    )
+
+        fig.update_layout(
+        xaxis_title="Annual Risk (Volatility)",
+        yaxis_title="Expected Annual Return",
+        template="plotly_white"
+    )
+
+        fig.show()
+    def plot_efficient_frontier(
+    self,
+    frontier,
+    max_sharpe_result,
+    min_variance_result
+):
+        """
+        Plot the Efficient Frontier and highlight
+        the Maximum Sharpe and Minimum Variance portfolios.
+        """
+
+        import plotly.graph_objects as go
+
+    # -------------------------
+    # Frontier calculations
+    # -------------------------
+
+        frontier = frontier.copy()
+
+        frontier["Sharpe"] = (
+        frontier["Return"] - self.risk_free_rate
+    ) / frontier["Risk"]
+
+    # -------------------------
+    # Maximum Sharpe Portfolio
+    # -------------------------
+
+        max_sharpe_weights = max_sharpe_result.x
+
+        max_sharpe_return = self.portfolio_return(
+            max_sharpe_weights
+    )
+
+        max_sharpe_risk = self.portfolio_risk(
+        max_sharpe_weights
+    )
+
+        max_sharpe_value = self.portfolio_sharpe_ratio(
+        max_sharpe_weights
+    )
+
+    # -------------------------
+    # Minimum Variance Portfolio
+    # -------------------------
+
+        min_variance_weights = min_variance_result.x
+
+        min_variance_return = self.portfolio_return(
+        min_variance_weights
+    )
+
+        min_variance_risk = self.portfolio_risk(
+        min_variance_weights
+    )
+
+        min_variance_sharpe = self.portfolio_sharpe_ratio(
+        min_variance_weights
+    )
+
+    # -------------------------
+    # Create figure
+    # -------------------------
+
+        fig = go.Figure()
+
+    # Efficient Frontier
+        fig.add_trace(
+        go.Scatter(
+            x=frontier["Risk"],
+            y=frontier["Return"],
+            mode="lines+markers",
+            name="Efficient Frontier",
+            text=[
+                f"Return: {r:.2%}<br>"
+                f"Risk: {risk:.2%}<br>"
+                f"Sharpe: {s:.3f}"
+                for r, risk, s in zip(
+                    frontier["Return"],
+                    frontier["Risk"],
+                    frontier["Sharpe"]
+                )
+            ],
+            hovertemplate="%{text}<extra></extra>"
+        )
+    )
+
+    # Maximum Sharpe Portfolio
+        fig.add_trace(
+        go.Scatter(
+            x=[max_sharpe_risk],
+            y=[max_sharpe_return],
+            mode="markers",
+            name="Maximum Sharpe",
+            marker=dict(
+                size=16,
+                symbol="star"
+            ),
+            text=[
+                f"Maximum Sharpe Portfolio<br>"
+                f"Return: {max_sharpe_return:.2%}<br>"
+                f"Risk: {max_sharpe_risk:.2%}<br>"
+                f"Sharpe: {max_sharpe_value:.3f}"
+            ],
+            hovertemplate="%{text}<extra></extra>"
+        )
+    )
+
+    # Minimum Variance Portfolio
+        fig.add_trace(
+            go.Scatter(
+            x=[min_variance_risk],
+            y=[min_variance_return],
+            mode="markers",
+            name="Minimum Variance",
+            marker=dict(
+                size=16,
+                symbol="star"
+            ),
+            text=[
+                f"Minimum Variance Portfolio<br>"
+                f"Return: {min_variance_return:.2%}<br>"
+                f"Risk: {min_variance_risk:.2%}<br>"
+                f"Sharpe: {min_variance_sharpe:.3f}"
+            ],
+            hovertemplate="%{text}<extra></extra>"
+        )
+    )
+
+    # -------------------------
+    # Layout
+    # -------------------------
+
+        fig.update_layout(
+        title="Markowitz Efficient Frontier",
+        xaxis_title="Annual Risk (Volatility)",
+        yaxis_title="Expected Annual Return",
+        template="plotly_white",
+        hovermode="closest"
+    )
+
+        fig.show()
+
+        return fig
+    def save_efficient_frontier(
+    self,
+    frontier,
+    output_file="data/processed/efficient_frontier.csv"
+):
+        """
+        Save Efficient Frontier results to CSV.
+        """
+
+        output_path = Path(output_file)
+
+        output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+        frontier.to_csv(
+        output_path,
+        index=False
+    )
+
+        print("\nEfficient Frontier saved successfully.")
+        print(output_path)
+
 if __name__ == "__main__":
 
     optimizer = MarkowitzOptimizer()
@@ -265,3 +543,41 @@ if __name__ == "__main__":
     optimizer.print_portfolio_summary(result)
     min_result = optimizer.minimum_variance_portfolio()
     optimizer.print_minimum_variance_summary(min_result)
+    targets = optimizer.generate_target_returns()
+
+    print("\nTarget Returns")
+    print("-" * 35)
+
+    print(targets[:10])
+    result = optimizer.optimize_target_return(
+    targets[50])
+    print("\nOptimization Success")
+    print(result.success)
+
+    print("\nPortfolio Risk")
+    print(
+    optimizer.portfolio_risk(result.x))
+
+    print("\nPortfolio Return")
+    print(
+    optimizer.portfolio_return(result.x))
+    frontier = optimizer.efficient_frontier()
+
+    max_sharpe_result = optimizer.maximum_sharpe_portfolio()
+    min_variance_result = optimizer.minimum_variance_portfolio()
+
+    optimizer.plot_efficient_frontier(
+    frontier,
+    max_sharpe_result,
+    min_variance_result
+)
+    optimizer.save_efficient_frontier(frontier)
+    print("\nEfficient Frontier")
+    print("-" * 35)
+
+    print(frontier.head())
+
+    print()
+
+    print(frontier.tail())
+    
