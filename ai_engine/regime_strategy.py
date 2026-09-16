@@ -21,15 +21,21 @@ from optimization.backtest import PortfolioBacktester
 
 class RegimeStrategyAnalyzer:
     """
-    Learn a strategy-selection rule from training-period
-    regime performance and evaluate it out-of-sample.
+    Risk-aware regime-based portfolio strategy selection.
 
-    Strategy selection:
-        Calm            -> best training strategy
-        Defensive       -> best training strategy
-        High Volatility -> best training strategy
+    The model:
+        1. Uses market regimes learned from training data.
+        2. Evaluates three portfolio strategies within each
+           training regime.
+        3. Builds a risk-aware score for each strategy.
+        4. Selects the best strategy for each regime.
+        5. Freezes the learned mapping.
+        6. Applies it to the unseen test period.
 
-    The learned mapping is frozen before evaluating the test data.
+    Strategies:
+        Maximum Sharpe
+        Minimum Variance
+        Risk Parity
     """
 
     def __init__(
@@ -54,7 +60,17 @@ class RegimeStrategyAnalyzer:
         self.train_data = None
         self.test_data = None
 
+        self.training_weights = None
+
+        self.regime_metrics = None
+        self.regime_scores = None
+
         self.best_strategy_by_regime = None
+        self.regime_strategy_metrics = None
+
+    # ==================================================
+    # DATA LOADING
+    # ==================================================
 
     def load_data(self):
         """
@@ -71,17 +87,25 @@ class RegimeStrategyAnalyzer:
             parse_dates=["date"]
         )
 
-        self.returns = self.returns.sort_values(
-            "date"
-        ).reset_index(drop=True)
+        self.returns = (
+            self.returns
+            .sort_values("date")
+            .reset_index(drop=True)
+        )
 
-        self.regimes = self.regimes.sort_values(
-            "date"
-        ).reset_index(drop=True)
+        self.regimes = (
+            self.regimes
+            .sort_values("date")
+            .reset_index(drop=True)
+        )
 
         print(
             "Returns and regime data loaded successfully."
         )
+
+    # ==================================================
+    # TRAIN / TEST SPLIT
+    # ==================================================
 
     def split_data(self):
         """
@@ -137,6 +161,10 @@ class RegimeStrategyAnalyzer:
             f"{len(self.test_regimes)}"
         )
 
+    # ==================================================
+    # ALIGN REGIMES WITH RETURNS
+    # ==================================================
+
     def align_data(self):
         """
         Align regime classifications with return observations.
@@ -185,13 +213,17 @@ class RegimeStrategyAnalyzer:
             f"{len(self.test_data)}"
         )
 
+    # ==================================================
+    # CALCULATE FIXED STRATEGY RETURNS
+    # ==================================================
+
     def calculate_strategy_returns(self):
         """
-        Calculate daily returns for the three optimized
-        portfolio strategies on both training and test data.
+        Generate the three portfolio strategies using
+        training data only.
 
-        All portfolio weights are estimated from the training
-        period only and then kept fixed.
+        Their weights remain frozen when applied to
+        the test period.
         """
 
         backtester = PortfolioBacktester(
@@ -199,34 +231,32 @@ class RegimeStrategyAnalyzer:
             train_ratio=self.train_ratio
         )
 
-        # Load and split data using the same backtester
-        backtester.load_returns()
-        backtester.split_data()
+        # Suppress repeated diagnostic output from
+        # the optimization engine.
+        with redirect_stdout(io.StringIO()):
 
-        # ---------------------------------------------
-        # Generate Markowitz portfolios
-        # ---------------------------------------------
+            backtester.load_returns()
+            backtester.split_data()
 
-        max_sharpe, min_variance = (
-            backtester.generate_training_markowitz_portfolios()
-        )
-
-        # ---------------------------------------------
-        # Generate Risk Parity portfolio
-        # ---------------------------------------------
-
-        covariance = (
-            backtester.calculate_training_covariance()
-        )
-
-        risk_parity = (
-            backtester.optimize_risk_parity(
-                covariance
+            max_sharpe, min_variance = (
+                backtester
+                .generate_training_markowitz_portfolios()
             )
-        )
 
-        # Extract frozen training weights
-        weights = {
+            covariance = (
+                backtester
+                .calculate_training_covariance()
+            )
+
+            risk_parity = (
+                backtester
+                .optimize_risk_parity(
+                    covariance
+                )
+            )
+
+        # Freeze training weights
+        self.training_weights = {
             "Maximum Sharpe": max_sharpe.x,
             "Minimum Variance": min_variance.x,
             "Risk Parity": risk_parity.x
@@ -236,54 +266,63 @@ class RegimeStrategyAnalyzer:
             self.train_returns.columns[1:]
         )
 
-        # ---------------------------------------------
+        # ------------------------------------------------
         # Training strategy returns
-        # ---------------------------------------------
+        # ------------------------------------------------
 
         self.train_data["Maximum Sharpe"] = (
             self.train_data[asset_columns].values
-            @ weights["Maximum Sharpe"]
+            @ self.training_weights["Maximum Sharpe"]
         )
 
         self.train_data["Minimum Variance"] = (
             self.train_data[asset_columns].values
-            @ weights["Minimum Variance"]
+            @ self.training_weights["Minimum Variance"]
         )
 
         self.train_data["Risk Parity"] = (
             self.train_data[asset_columns].values
-            @ weights["Risk Parity"]
+            @ self.training_weights["Risk Parity"]
         )
 
-        # ---------------------------------------------
+        # ------------------------------------------------
         # Test strategy returns
-        # ---------------------------------------------
+        # ------------------------------------------------
 
         self.test_data["Maximum Sharpe"] = (
             self.test_data[asset_columns].values
-            @ weights["Maximum Sharpe"]
+            @ self.training_weights["Maximum Sharpe"]
         )
 
         self.test_data["Minimum Variance"] = (
             self.test_data[asset_columns].values
-            @ weights["Minimum Variance"]
+            @ self.training_weights["Minimum Variance"]
         )
 
         self.test_data["Risk Parity"] = (
             self.test_data[asset_columns].values
-            @ weights["Risk Parity"]
+            @ self.training_weights["Risk Parity"]
         )
-
-        # Store weights for possible later use
-        self.training_weights = weights
 
         print(
             "\nTraining and test strategy returns calculated."
         )
-    def analyze_strategy_performance_by_regime(self):
+
+    # ==================================================
+    # REGIME-SPECIFIC METRICS
+    # ==================================================
+
+    def calculate_regime_metrics(self):
         """
-        Calculate average daily strategy return within
-        each training regime.
+        Calculate risk-return statistics for each strategy
+        separately within each training regime.
+
+        Metrics:
+            Annualized Return
+            Annualized Volatility
+            Sharpe Ratio
+            Maximum Drawdown
+            VaR (95%)
         """
 
         strategies = [
@@ -292,56 +331,329 @@ class RegimeStrategyAnalyzer:
             "Risk Parity"
         ]
 
-        performance = (
-            self.train_data
-            .groupby("regime")[strategies]
-            .mean()
-        )
+        trading_days = 252
+        risk_free_rate = 0.065
+
+        rows = []
+
+        for regime in sorted(
+            self.train_data["regime"].unique()
+        ):
+
+            regime_data = self.train_data[
+                self.train_data["regime"] == regime
+            ]
+
+            for strategy in strategies:
+
+                returns = (
+                    regime_data[strategy]
+                    .dropna()
+                )
+
+                if len(returns) == 0:
+                    continue
+
+                # Arithmetic annualized return
+                annualized_return = (
+                    returns.mean()
+                    * trading_days
+                )
+
+                # Annualized volatility
+                annualized_volatility = (
+                    returns.std()
+                    * np.sqrt(trading_days)
+                )
+
+                # Sharpe ratio
+                if annualized_volatility == 0:
+                    sharpe_ratio = np.nan
+                else:
+                    sharpe_ratio = (
+                        annualized_return
+                        - risk_free_rate
+                    ) / annualized_volatility
+
+                # Wealth path
+                wealth = (
+                    1 + returns
+                ).cumprod()
+
+                running_max = wealth.cummax()
+
+                drawdown = (
+                    wealth / running_max
+                ) - 1
+
+                maximum_drawdown = (
+                    drawdown.min()
+                )
+
+                # 95% Historical VaR
+                var_95 = returns.quantile(0.05)
+
+                rows.append(
+                    {
+                        "Regime": regime,
+                        "Strategy": strategy,
+                        "Annualized Return":
+                            annualized_return,
+                        "Annualized Volatility":
+                            annualized_volatility,
+                        "Sharpe Ratio":
+                            sharpe_ratio,
+                        "Maximum Drawdown":
+                            maximum_drawdown,
+                        "VaR (95%)":
+                            var_95,
+                        "Observations":
+                            len(returns)
+                    }
+                )
+
+        self.regime_metrics = pd.DataFrame(rows)
 
         print(
-            "\nAverage Daily Strategy Return by Regime"
+            "\nRisk-Return Metrics by Training Regime"
         )
-        print("-" * 75)
+        print("-" * 90)
 
         print(
-            performance.to_string(
-                float_format=lambda x: f"{x:.6%}"
+            self.regime_metrics.to_string(
+                index=False,
+                float_format=lambda x: f"{x:.4%}"
             )
         )
 
-        self.regime_performance = performance
+        return self.regime_metrics
 
-        return performance
+    # ==================================================
+    # RISK-AWARE SCORING
+    # ==================================================
+
+    def calculate_regime_scores(self):
+        """
+        Calculate a risk-aware multi-criteria score
+        for each strategy within each regime.
+
+        Higher is better:
+            Annualized Return
+            Sharpe Ratio
+
+        Lower is better:
+            Annualized Volatility
+            Maximum Drawdown magnitude
+            VaR magnitude
+
+        Weights:
+            Return       = 30%
+            Sharpe       = 25%
+            Volatility   = 15%
+            Drawdown     = 20%
+            VaR          = 10%
+        """
+
+        metrics = self.regime_metrics.copy()
+
+        # Convert negative risk measures to positive magnitudes
+        metrics["Drawdown Risk"] = (
+            metrics["Maximum Drawdown"].abs()
+        )
+
+        metrics["VaR Risk"] = (
+            metrics["VaR (95%)"].abs()
+        )
+
+        weights = {
+            "Annualized Return": 0.30,
+            "Sharpe Ratio": 0.25,
+            "Annualized Volatility": 0.15,
+            "Drawdown Risk": 0.20,
+            "VaR Risk": 0.10
+        }
+
+        scored_groups = []
+
+        for regime, group in metrics.groupby(
+            "Regime"
+        ):
+
+            group = group.copy()
+
+            scores = pd.DataFrame(
+                index=group.index
+            )
+
+            # -------------------------------
+            # Higher is better
+            # -------------------------------
+
+            for metric in [
+                "Annualized Return",
+                "Sharpe Ratio"
+            ]:
+
+                minimum = group[metric].min()
+                maximum = group[metric].max()
+
+                if (
+                    pd.isna(minimum)
+                    or maximum == minimum
+                ):
+                    scores[metric] = 1.0
+                else:
+                    scores[metric] = (
+                        group[metric] - minimum
+                    ) / (
+                        maximum - minimum
+                    )
+
+            # -------------------------------
+            # Lower is better
+            # -------------------------------
+
+            for metric in [
+                "Annualized Volatility",
+                "Drawdown Risk",
+                "VaR Risk"
+            ]:
+
+                minimum = group[metric].min()
+                maximum = group[metric].max()
+
+                if (
+                    pd.isna(minimum)
+                    or maximum == minimum
+                ):
+                    scores[metric] = 1.0
+                else:
+                    scores[metric] = (
+                        maximum - group[metric]
+                    ) / (
+                        maximum - minimum
+                    )
+
+            # -------------------------------
+            # Weighted score
+            # -------------------------------
+
+            group["Overall Score"] = 0.0
+
+            for metric, weight in weights.items():
+                group["Overall Score"] += (
+                    scores[metric]
+                    * weight
+                )
+
+            # Keep individual criterion scores
+            group["Return Score"] = scores[
+                "Annualized Return"
+            ]
+
+            group["Sharpe Score"] = scores[
+                "Sharpe Ratio"
+            ]
+
+            group["Volatility Score"] = scores[
+                "Annualized Volatility"
+            ]
+
+            group["Drawdown Score"] = scores[
+                "Drawdown Risk"
+            ]
+
+            group["VaR Score"] = scores[
+                "VaR Risk"
+            ]
+
+            scored_groups.append(group)
+
+        self.regime_scores = pd.concat(
+            scored_groups,
+            ignore_index=True
+        )
+
+        print(
+            "\nRisk-Aware Strategy Scores by Regime"
+        )
+        print("-" * 90)
+
+        print(
+            self.regime_scores[
+                [
+                    "Regime",
+                    "Strategy",
+                    "Return Score",
+                    "Sharpe Score",
+                    "Volatility Score",
+                    "Drawdown Score",
+                    "VaR Score",
+                    "Overall Score"
+                ]
+            ].to_string(
+                index=False,
+                float_format=lambda x: f"{x:.4f}"
+            )
+        )
+
+        return self.regime_scores
+
+    # ==================================================
+    # LEARN STRATEGY FOR EACH REGIME
+    # ==================================================
 
     def learn_best_strategy_by_regime(self):
         """
-        Learn the best strategy for each regime using
-        training-period average daily returns only.
+        Select the strategy with the highest risk-aware
+        score within each training regime.
         """
 
+        best_rows = (
+            self.regime_scores
+            .loc[
+                self.regime_scores
+                .groupby("Regime")[
+                    "Overall Score"
+                ].idxmax()
+            ]
+            .copy()
+        )
+
         self.best_strategy_by_regime = (
-            self.regime_performance
-            .idxmax(axis=1)
+            best_rows
+            .set_index("Regime")["Strategy"]
             .to_dict()
         )
 
         print(
-            "\nBest Strategy Learned for Each Regime"
+            "\nBest Risk-Aware Strategy Learned for Each Regime"
         )
-        print("-" * 65)
+        print("-" * 70)
 
         for regime, strategy in (
             self.best_strategy_by_regime.items()
         ):
+            score = best_rows.loc[
+                best_rows["Regime"] == regime,
+                "Overall Score"
+            ].iloc[0]
+
             print(
-                f"{regime:<20} → {strategy}"
+                f"{regime:<20} → "
+                f"{strategy:<20} "
+                f"(Score = {score:.4f})"
             )
 
         return self.best_strategy_by_regime
 
+    # ==================================================
+    # APPLY TO TEST PERIOD
+    # ==================================================
+
     def apply_regime_strategy_to_test(self):
         """
-        Apply the frozen training regime-to-strategy mapping
+        Apply the frozen regime-to-strategy mapping
         to the unseen test period.
         """
 
@@ -355,11 +667,13 @@ class RegimeStrategyAnalyzer:
             "Regime Strategy Return"
         ] = np.nan
 
-        for strategy in [
+        strategies = [
             "Maximum Sharpe",
             "Minimum Variance",
             "Risk Parity"
-        ]:
+        ]
+
+        for strategy in strategies:
 
             mask = (
                 self.test_data["Selected Strategy"]
@@ -375,9 +689,9 @@ class RegimeStrategyAnalyzer:
             ]
 
         print(
-            "\nRegime-Switching Test Results"
+            "\nRisk-Aware Regime-Switching Test Results"
         )
-        print("-" * 75)
+        print("-" * 80)
 
         print(
             self.test_data[
@@ -392,20 +706,27 @@ class RegimeStrategyAnalyzer:
             )
         )
 
-        print("\nStrategy Selection Counts")
+        print(
+            "\nStrategy Selection Counts"
+        )
         print("-" * 55)
 
         print(
-            self.test_data["Selected Strategy"]
-            .value_counts()
+            self.test_data[
+                "Selected Strategy"
+            ].value_counts()
         )
 
         return self.test_data
 
+    # ==================================================
+    # TEST PERFORMANCE
+    # ==================================================
+
     def calculate_regime_strategy_performance(self):
         """
-        Calculate out-of-sample performance of the
-        regime-switching strategy.
+        Evaluate the risk-aware regime-switching strategy
+        on the unseen test period.
         """
 
         returns = (
@@ -423,21 +744,25 @@ class RegimeStrategyAnalyzer:
         trading_days = 252
         risk_free_rate = 0.065
 
-        cumulative_return = (
+        # Total return
+        total_return = (
             (1 + returns).prod() - 1
         )
 
+        # Annualized return
         annualized_return = (
-            (1 + cumulative_return)
+            (1 + total_return)
             ** (trading_days / len(returns))
             - 1
         )
 
+        # Annualized volatility
         annualized_volatility = (
             returns.std()
             * np.sqrt(trading_days)
         )
 
+        # Sharpe
         if annualized_volatility == 0:
             sharpe_ratio = np.nan
         else:
@@ -446,6 +771,7 @@ class RegimeStrategyAnalyzer:
                 - risk_free_rate
             ) / annualized_volatility
 
+        # Drawdown
         wealth = (
             1 + returns
         ).cumprod()
@@ -456,27 +782,31 @@ class RegimeStrategyAnalyzer:
             wealth / running_max
         ) - 1
 
-        maximum_drawdown = drawdown.min()
+        maximum_drawdown = (
+            drawdown.min()
+        )
 
+        # VaR
         var_95 = returns.quantile(0.05)
 
-        metrics = {
-            "Total Return": cumulative_return,
-            "Annualized Return": annualized_return,
+        self.regime_strategy_metrics = {
+            "Total Return": total_return,
+            "Annualized Return":
+                annualized_return,
             "Annualized Volatility":
                 annualized_volatility,
-            "Sharpe Ratio": sharpe_ratio,
+            "Sharpe Ratio":
+                sharpe_ratio,
             "Maximum Drawdown":
                 maximum_drawdown,
-            "VaR (95%)": var_95
+            "VaR (95%)":
+                var_95
         }
 
-        self.regime_strategy_metrics = metrics
-
         print(
-            "\nRegime-Switching Strategy Performance"
+            "\nRisk-Aware Regime-Switching Strategy Performance"
         )
-        print("-" * 65)
+        print("-" * 70)
 
         print(
             f"Observations          : {len(returns)}"
@@ -484,7 +814,7 @@ class RegimeStrategyAnalyzer:
 
         print(
             f"Total Return          : "
-            f"{cumulative_return:.4%}"
+            f"{total_return:.4%}"
         )
 
         print(
@@ -512,33 +842,35 @@ class RegimeStrategyAnalyzer:
             f"{var_95:.4%}"
         )
 
-        return metrics
+        return self.regime_strategy_metrics
+
+    # ==================================================
+    # SAVE OUTPUTS
+    # ==================================================
 
     def save_outputs(
         self,
-        regime_results_file=(
+        score_file=(
             "data/processed/"
-            "regime_switching_results.csv"
+            "regime_strategy_scores.csv"
         ),
-        regime_test_file=(
+        test_file=(
             "data/processed/"
             "regime_strategy_test_returns.csv"
+        ),
+        result_file=(
+            "data/processed/"
+            "regime_switching_results_v2.csv"
         )
     ):
         """
-        Save regime-switching performance and
-        test-period selection history.
+        Save regime scores, test history, and
+        regime-switching performance.
         """
 
-        metrics_table = pd.DataFrame(
-            [self.regime_strategy_metrics],
-            index=["Regime Switching"]
-        )
-
-        metrics_table.index.name = "Strategy"
-
-        metrics_table.to_csv(
-            regime_results_file
+        self.regime_scores.to_csv(
+            score_file,
+            index=False
         )
 
         self.test_data[
@@ -549,20 +881,36 @@ class RegimeStrategyAnalyzer:
                 "Regime Strategy Return"
             ]
         ].to_csv(
-            regime_test_file,
+            test_file,
             index=False
         )
 
-        print(
-            "\nRegime-switching results saved to:"
+        pd.DataFrame(
+            [self.regime_strategy_metrics],
+            index=["Risk-Aware Regime Switching"]
+        ).to_csv(
+            result_file
         )
-        print(regime_results_file)
 
         print(
-            "\nRegime-switching test history saved to:"
+            "\nRisk-aware strategy scores saved to:"
         )
-        print(regime_test_file)
+        print(score_file)
 
+        print(
+            "\nRisk-aware test history saved to:"
+        )
+        print(test_file)
+
+        print(
+            "\nRisk-aware performance saved to:"
+        )
+        print(result_file)
+
+
+# ======================================================
+# MAIN
+# ======================================================
 
 if __name__ == "__main__":
 
@@ -576,7 +924,9 @@ if __name__ == "__main__":
 
     analyzer.calculate_strategy_returns()
 
-    analyzer.analyze_strategy_performance_by_regime()
+    analyzer.calculate_regime_metrics()
+
+    analyzer.calculate_regime_scores()
 
     analyzer.learn_best_strategy_by_regime()
 
