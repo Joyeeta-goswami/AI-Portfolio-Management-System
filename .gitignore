@@ -10,7 +10,6 @@ __pycache__/
 dist/
 build/
 data/raw/
-data/processed/
 .env
 .ipynb_checkpoints/
 *.sqlite
