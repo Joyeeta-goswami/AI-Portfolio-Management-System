@@ -1,0 +1,5 @@
+Strategy,Final Score,Recommended,Risk Profile,Evidence Summary
+Max Sharpe,0.8318757053041581,True,Lower Downside Orientation,"Evidence includes favorable benchmark-relative performance, relatively favorable transaction-cost characteristics, strong Monte Carlo outcome characteristics, relatively strong downside-risk characteristics."
+Min Variance,0.3938100139116404,False,Balanced,Evidence includes relatively strong downside-risk characteristics.
+Risk Parity,0.49879603206178463,False,Balanced,Evidence includes relatively strong downside-risk characteristics.
+Risk-Aware Regime Switching,0.274076536065162,False,Balanced,The strategy has a mixed evidence profile across the evaluated criteria.

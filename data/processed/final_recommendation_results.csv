@@ -1,0 +1,5 @@
+Strategy,Backtest Score,Benchmark Score,Transaction Cost Score,Monte Carlo Score,Downside Risk Score,Final Score,Evidence Summary,Risk Profile,Recommended
+Max Sharpe,0.55,0.8,1.0,1.0,0.8718785265207906,0.8318757053041581,"Evidence includes favorable benchmark-relative performance, relatively favorable transaction-cost characteristics, strong Monte Carlo outcome characteristics, relatively strong downside-risk characteristics.",Lower Downside Orientation,True
+Min Variance,0.3509856855597535,0.2,0.3,0.2636780203313419,0.8257204371943327,0.3938100139116404,Evidence includes relatively strong downside-risk characteristics.,Balanced,False
+Risk Parity,0.4556741980460853,0.23649682245726322,0.333258403963996,0.45694041149451037,0.9258954785672343,0.49879603206178463,Evidence includes relatively strong downside-risk characteristics.,Balanced,False
+Risk-Aware Regime Switching,0.5,0.5828399021800659,0.41100367158768086,0.0,0.0,0.274076536065162,The strategy has a mixed evidence profile across the evaluated criteria.,Balanced,False
