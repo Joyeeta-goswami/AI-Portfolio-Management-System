@@ -1,6 +1,6 @@
 """
 AI Portfolio Management System
---------------------------------
+------------------------------
 Streamlit dashboard for:
 - Portfolio risk analysis
 - Markowitz optimization
@@ -11,36 +11,38 @@ Streamlit dashboard for:
 - Transaction costs
 - Monte Carlo simulation
 - Integrated portfolio recommendation
+
+Run with:  python -m streamlit run app.py
+The dashboard only reads the CSV files in data/processed/.
 """
 
 from pathlib import Path
 import sys
 
-import numpy as np
 import pandas as pd
-import streamlit as st
 import plotly.express as px
-import plotly.graph_objects as go
-
-
-# ============================================================
-# PROJECT PATH
-# ============================================================
+import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from theme import (  # noqa: E402  (needs the sys.path entry above)
+    AMBER,
+    BORDER,
+    COLORWAY,
+    MUTED,
+    PLOTLY_TEMPLATE_NAME,
+    PRIMARY,
+    REGIME_COLORS,
+    STRATEGY_COLORS,
+    SURFACE,
+    TEXT,
+    register_plotly_template,
+)
 
 DATA_DIR = PROJECT_ROOT / "data" / "processed"
 
-OUTPUT_DIR = (
-    PROJECT_ROOT
-    / "visualization"
-    / "outputs"
-)
-
-sys.path.insert(
-    0,
-    str(PROJECT_ROOT)
-)
+register_plotly_template()
 
 
 # ============================================================
@@ -51,144 +53,196 @@ st.set_page_config(
     page_title="AI Portfolio Manager",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 
 # ============================================================
-# CUSTOM CSS
+# CUSTOM CSS  (colours come from theme.py)
 # ============================================================
 
 st.markdown(
-    """
+    f"""
     <style>
-
-    .main-title {
+    .main-title {{
         font-size: 2.4rem;
         font-weight: 700;
         margin-bottom: 0.2rem;
-    }
+        background: linear-gradient(90deg, {PRIMARY}, {AMBER});
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        width: fit-content;
+    }}
 
-    .subtitle {
-        color: #6b7280;
+    .subtitle {{
+        color: {MUTED};
         font-size: 1.05rem;
         margin-bottom: 1.5rem;
-    }
+    }}
 
-    .metric-card {
-        padding: 1rem;
-        border-radius: 0.8rem;
-        background-color: #f8fafc;
-        border: 1px solid #e5e7eb;
-    }
-
-    .recommendation-card {
-    padding: 1.4rem;
-    border-radius: 1rem;
-    background-color: #f8fafc;
-    border: 1px solid #d1d5db;
-    margin-bottom: 1rem;
-    color: #111827;
-}
+    .recommendation-card {{
+        padding: 1.4rem 1.6rem;
+        border-radius: 1rem;
+        background-color: {SURFACE};
+        border: 1px solid {BORDER};
+        border-left: 5px solid {PRIMARY};
+        margin-bottom: 1rem;
+        color: {TEXT};
+    }}
 
     .recommendation-card h1,
     .recommendation-card h2,
-    .recommendation-card p {
-    color: #111827;
-}
+    .recommendation-card p {{
+        color: {TEXT};
+        margin: 0.2rem 0;
+    }}
 
+    .recommendation-card h2 {{
+        font-size: 1rem;
+        font-weight: 600;
+        color: {MUTED};
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+    }}
+
+    .recommendation-card h1 {{
+        color: {PRIMARY};
+    }}
+
+    div[data-testid="stMetric"] {{
+        background-color: {SURFACE};
+        border: 1px solid {BORDER};
+        border-radius: 0.8rem;
+        padding: 0.9rem 1rem;
+    }}
     </style>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 
 # ============================================================
-# HELPER: LOAD CSV
+# DATA LOADING
 # ============================================================
 
 @st.cache_data
 def load_csv(filename):
-
     path = DATA_DIR / filename
-
     if not path.exists():
         return None
-
     return pd.read_csv(path)
 
 
-# ============================================================
-# LOAD ALL DATA
-# ============================================================
-
-@st.cache_data
-def load_all_data():
-
-    data = {}
-
-    files = [
-        "prices.csv",
-        "returns.csv",
-        "risk_summary.csv",
-        "efficient_frontier.csv",
-        "backtest_results.csv",
-        "cumulative_wealth.csv",
-        "market_regimes.csv",
-        "regime_switching_results.csv",
-        "regime_switching_results_v2.csv",
-        "regime_strategy_test_returns.csv",
-        "walk_forward_results.csv",
-        "walk_forward_results_v2.csv",
-        "nifty50_returns.csv",
-        "benchmark_adjusted_results.csv",
-        "benchmark_adjusted_wealth.csv",
-        "transaction_cost_results.csv",
-        "transaction_cost_sensitivity.csv",
-        "monte_carlo_results.csv",
-        "monte_carlo_terminal_wealth.csv",
-        "monte_carlo_drawdowns.csv",
-        "monte_carlo_regime_results.csv",
-        "monte_carlo_regime_terminal_wealth.csv",
-        "monte_carlo_regime_drawdowns.csv",
-        "final_recommendation_results.csv",
-        "final_recommendation_summary.csv",
-    ]
-
-    for filename in files:
-
-        data[filename] = load_csv(
-            filename
-        )
-
-    return data
+def get(filename):
+    """Return one processed CSV as a DataFrame, or None if it is missing."""
+    return load_csv(filename)
 
 
 # ============================================================
-# FORMAT HELPERS
+# DISPLAY HELPERS
 # ============================================================
 
-def format_pct(value):
-
-    if pd.isna(value):
-        return "N/A"
-
-    return f"{value:.2%}"
+# Columns that hold fractions (0.05 = 5%) and should be shown as percentages.
+_PERCENT_KEYWORDS = ("Return", "Volatility", "Drawdown", "VaR", "Probability")
 
 
-def format_number(value):
+def _column_format(name):
+    """Return (scale, format) for a column, or None for text columns."""
+    if "(%)" in name:                      # already in percent units
+        return 1, "%.2f"
+    if name == "Transaction Cost":         # 0.001 -> 0.10%
+        return 100, "%.2f%%"
+    if "Sharpe Ratio" in name or name.endswith("Sharpe"):
+        return 1, "%.3f"
+    if "Score" in name:
+        return 1, "%.3f"
+    if any(k in name for k in _PERCENT_KEYWORDS) and "Wealth" not in name:
+        return 100, "%.2f%%"
+    return 1, "%.2f"
 
-    if pd.isna(value):
-        return "N/A"
 
-    return f"{value:.2f}"
+def show_table(df, height="auto"):
+    """Show a DataFrame with sensible number formats (percent, ratios, ...)."""
+    view = df.copy()
+    config = {}
+
+    for col in view.columns:
+        if not pd.api.types.is_numeric_dtype(view[col]) or pd.api.types.is_bool_dtype(view[col]):
+            continue
+        scale, fmt = _column_format(col)
+        if scale != 1:
+            view[col] = view[col] * scale
+        config[col] = st.column_config.NumberColumn(col, format=fmt)
+
+    st.dataframe(
+        view,
+        column_config=config,
+        width="stretch",
+        hide_index=True,
+        height=height,
+    )
 
 
-# ============================================================
-# DATA
-# ============================================================
+def style_figure(fig, height=500):
+    fig.update_layout(
+        template=PLOTLY_TEMPLATE_NAME,
+        height=height,
+        margin=dict(l=10, r=10, t=60, b=10),
+        xaxis=dict(automargin=True),
+        yaxis=dict(automargin=True),
+    )
+    return fig
 
-data = load_all_data()
+
+def show_figure(fig, height=500):
+    st.plotly_chart(style_figure(fig, height), theme=None)
+
+
+def wide_to_long(df, id_col, var_name, value_name):
+    columns = [c for c in df.columns if c != id_col]
+    return df[[id_col] + columns].melt(
+        id_vars=id_col, var_name=var_name, value_name=value_name
+    )
+
+
+def wealth_chart(df, title):
+    """Line chart of cumulative wealth (base = 100), one line per strategy."""
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    long = wide_to_long(df, "date", "Strategy", "Wealth")
+
+    fig = px.line(
+        long,
+        x="date",
+        y="Wealth",
+        color="Strategy",
+        color_discrete_map=STRATEGY_COLORS,
+        title=title,
+    )
+    fig.add_hline(y=100, line_dash="dash", line_color=MUTED,
+                  annotation_text="Start = 100")
+    # NIFTY 50 is the reference line, so draw it dashed.
+    for trace in fig.data:
+        if trace.name in ("NIFTY 50", "NIFTY50"):
+            trace.line.dash = "dot"
+    fig.update_layout(legend_title_text="", yaxis_title="Wealth (start = 100)",
+                      xaxis_title="")
+    return fig
+
+
+def combine(*filenames):
+    """Stack several processed CSVs into one DataFrame (None if none exist)."""
+    frames = [get(f) for f in filenames]
+    frames = [f for f in frames if f is not None]
+    return pd.concat(frames, ignore_index=True) if frames else None
+
+
+def recommended_row(recommendation):
+    """First row flagged Recommended, or None."""
+    if recommendation is None or "Recommended" not in recommendation.columns:
+        return None
+    rows = recommendation[recommendation["Recommended"].astype(bool)]
+    return rows.iloc[0] if len(rows) else None
 
 
 # ============================================================
@@ -219,8 +273,12 @@ page = st.sidebar.radio(
         "💰 Transaction Costs",
         "🎲 Monte Carlo",
         "🤖 AI Recommendation",
-    ]
+    ],
 )
+
+st.sidebar.markdown("---")
+st.sidebar.caption("AI Portfolio Management System | M.Sc. Statistics")
+st.sidebar.caption("For research and educational use.")
 
 
 # ============================================================
@@ -229,9 +287,8 @@ page = st.sidebar.radio(
 
 st.markdown(
     '<div class="main-title">AI Portfolio Management System</div>',
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
-
 st.markdown(
     """
     <div class="subtitle">
@@ -240,7 +297,7 @@ st.markdown(
     risk-aware decision support.
     </div>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 
@@ -252,109 +309,63 @@ if page == "🏠 Overview":
 
     st.header("Portfolio Management Overview")
 
-    recommendation = data.get(
-        "final_recommendation_results.csv"
-    )
+    recommendation = get("final_recommendation_results.csv")
+    prices = get("prices.csv")
+    mc_wealth = get("monte_carlo_terminal_wealth.csv")
 
-    if recommendation is not None:
+    row = recommended_row(recommendation)
 
-        recommended_rows = recommendation[
-            recommendation["Recommended"] == True
-        ]
-
-        if len(recommended_rows) > 0:
-
-            row = recommended_rows.iloc[0]
-
-            st.markdown(
-                f"""
-                <div class="recommendation-card">
-
-                <h2>Recommended Strategy</h2>
-
-                <h1>{row['Strategy']}</h1>
-
-                <p>
-                Integrated score:
-                <b>{row['Final Score']:.4f}</b>
-                </p>
-
-                <p>
-                Risk profile:
-                <b>{row['Risk Profile']}</b>
-                </p>
-
-                <p>
-                {row['Evidence Summary']}
-                </p>
-
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+    if row is not None:
+        st.markdown(
+            f"""
+            <div class="recommendation-card">
+            <h2>Recommended Strategy</h2>
+            <h1>{row['Strategy']}</h1>
+            <p>Integrated score: <b>{row['Final Score']:.4f}</b></p>
+            <p>Risk profile: <b>{row['Risk Profile']}</b></p>
+            <p>{row['Evidence Summary']}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     st.subheader("System Components")
 
+    n_assets = (len(prices.columns) - 1) if prices is not None else 8
+    n_strategies = len(recommendation) if recommendation is not None else 4
+    n_paths = (
+        f"{mc_wealth['Simulation'].nunique():,}"
+        if mc_wealth is not None and "Simulation" in mc_wealth.columns
+        else "10,000"
+    )
+
     col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-
-        st.metric(
-            "Assets",
-            "8"
-        )
-
-    with col2:
-
-        st.metric(
-            "Strategies",
-            "4"
-        )
-
-    with col3:
-
-        st.metric(
-            "Monte Carlo Paths",
-            "10,000"
-        )
-
-    with col4:
-
-        st.metric(
-            "ML Method",
-            "K-Means"
-        )
+    col1.metric("Assets", n_assets)
+    col2.metric("Strategies", n_strategies)
+    col3.metric("Monte Carlo Paths", n_paths)
+    col4.metric("ML Method", "K-Means")
 
     st.subheader("Portfolio Strategies")
 
-    strategy_description = pd.DataFrame({
+    show_table(pd.DataFrame({
         "Strategy": [
             "Max Sharpe",
             "Min Variance",
             "Risk Parity",
-            "Risk-Aware Regime Switching"
+            "Risk-Aware Regime Switching",
         ],
         "Purpose": [
             "Risk-adjusted return optimization",
             "Minimum portfolio variance",
             "Balanced contribution to portfolio risk",
-            "Adaptive strategy selection using market regimes"
-        ]
-    })
-
-    st.dataframe(
-        strategy_description,
-        use_container_width=True,
-        hide_index=True
-    )
+            "Adaptive strategy selection using market regimes",
+        ],
+    }))
 
     st.info(
-        """
-        The recommendation engine is an interpretable
-        multi-criteria decision system. The machine-learning
-        component of the system is K-Means market-regime
-        detection.
-        """
+        "The recommendation engine is an interpretable multi-criteria "
+        "decision system. The machine-learning component of the system "
+        "is K-Means market-regime detection."
     )
 
 
@@ -366,80 +377,39 @@ elif page == "📈 Market & Risk":
 
     st.header("Market & Risk Analysis")
 
-    prices = data.get(
-        "prices.csv"
-    )
-
-    risk_summary = data.get(
-        "risk_summary.csv"
-    )
+    prices = get("prices.csv")
+    risk_summary = get("risk_summary.csv")
 
     if prices is None:
-
-        st.error(
-            "prices.csv was not found."
-        )
-
+        st.error("prices.csv was not found in data/processed/.")
     else:
-
         prices = prices.copy()
+        prices["date"] = pd.to_datetime(prices["date"])
 
-        date_column = "date"
-
-        prices[date_column] = pd.to_datetime(
-            prices[date_column]
-        )
-
-        assets = [
-            col
-            for col in prices.columns
-            if col != "date"
-        ]
+        assets = [c for c in prices.columns if c != "date"]
 
         selected_assets = st.multiselect(
-            "Select assets",
-            assets,
-            default=assets[:4]
+            "Select assets", assets, default=assets[:4]
         )
 
         if selected_assets:
-
-            plot_data = prices[
-                ["date"] + selected_assets
-            ].melt(
-                id_vars="date",
-                var_name="Asset",
-                value_name="Price"
+            long = prices[["date"] + selected_assets].melt(
+                id_vars="date", var_name="Asset", value_name="Price"
             )
-
             fig = px.line(
-                plot_data,
-                x="date",
-                y="Price",
-                color="Asset",
-                title="Historical Asset Prices"
+                long, x="date", y="Price", color="Asset",
+                color_discrete_sequence=COLORWAY,
+                title="Historical Asset Prices",
             )
+            fig.update_layout(legend_title_text="", xaxis_title="",
+                              yaxis_title="Price (₹)")
+            show_figure(fig)
+        else:
+            st.info("Select at least one asset to draw the price chart.")
 
-            fig.update_layout(
-                height=500
-            )
-
-            st.plotly_chart(
-                fig,
-                use_container_width=True
-            )
-
-        if risk_summary is not None:
-
-            st.subheader(
-                "Historical Risk Summary"
-            )
-
-            st.dataframe(
-                risk_summary,
-                use_container_width=True,
-                hide_index=True
-            )
+    if risk_summary is not None:
+        st.subheader("Historical Risk Summary")
+        show_table(risk_summary)
 
 
 # ============================================================
@@ -450,88 +420,41 @@ elif page == "⚙️ Portfolio Optimization":
 
     st.header("Portfolio Optimization")
 
-    risk_summary = data.get(
-        "risk_summary.csv"
-    )
-
-    efficient_frontier = data.get(
-        "efficient_frontier.csv"
-    )
-
-    st.subheader(
-        "Risk Characteristics of Individual Assets"
-    )
+    risk_summary = get("risk_summary.csv")
+    frontier = get("efficient_frontier.csv")
 
     if risk_summary is not None:
+        st.subheader("Risk Characteristics of Individual Assets")
+        show_table(risk_summary)
 
-        st.dataframe(
-            risk_summary,
-            use_container_width=True,
-            hide_index=True
+    if frontier is not None:
+        st.subheader("Efficient Frontier")
+
+        frontier = frontier.sort_values("Return")
+        fig = px.line(
+            frontier, x="Risk", y="Return", markers=True,
+            title="Markowitz Efficient Frontier",
+            labels={
+                "Risk": "Annualized Portfolio Risk",
+                "Return": "Annualized Portfolio Return",
+            },
         )
+        fig.update_traces(line_color=PRIMARY, marker_color=PRIMARY)
+        fig.update_layout(xaxis_tickformat=".0%", yaxis_tickformat=".0%")
+        show_figure(fig, height=550)
 
-    st.subheader(
-        "Efficient Frontier"
-    )
-
-    if efficient_frontier is not None:
-
-        frontier = efficient_frontier.copy()
-
-        fig = px.scatter(
-    frontier,
-    x="Risk",
-    y="Return",
-    title="Markowitz Efficient Frontier",
-    labels={
-        "Risk": "Annualized Portfolio Risk",
-        "Return": "Annualized Portfolio Return"
-    }
-)
-
-        fig.update_layout(
-            height=550
-        )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-    st.subheader(
-        "Optimization Methodology"
-    )
+    st.subheader("Optimization Methodology")
 
     col1, col2, col3 = st.columns(3)
-
-    with col1:
-
-        st.metric(
-            "Markowitz",
-            "Maximum Sharpe"
-        )
-
-    with col2:
-
-        st.metric(
-            "Markowitz",
-            "Minimum Variance"
-        )
-
-    with col3:
-
-        st.metric(
-            "Alternative",
-            "Risk Parity"
-        )
+    col1.metric("Markowitz", "Maximum Sharpe")
+    col2.metric("Markowitz", "Minimum Variance")
+    col3.metric("Alternative", "Risk Parity")
 
     st.write(
-        """
-        Markowitz portfolios use expected returns and the
-        covariance matrix estimated from the training period.
-        Risk Parity allocates capital so that portfolio risk
-        contributions are approximately balanced across assets.
-        """
+        "Markowitz portfolios use expected returns and the covariance "
+        "matrix estimated from the training period. Risk Parity allocates "
+        "capital so that portfolio risk contributions are approximately "
+        "balanced across assets."
     )
 
 
@@ -541,80 +464,21 @@ elif page == "⚙️ Portfolio Optimization":
 
 elif page == "🧪 Backtesting":
 
-    st.header(
-        "Out-of-Sample Backtesting"
-    )
+    st.header("Out-of-Sample Backtesting")
 
-    backtest = data.get(
-        "backtest_results.csv"
-    )
-
-    wealth = data.get(
-        "cumulative_wealth.csv"
-    )
+    backtest = get("backtest_results.csv")
+    wealth = get("cumulative_wealth.csv")
 
     if backtest is not None:
-
-        st.subheader(
-            "Test-Period Performance"
-        )
-
-        st.dataframe(
-            backtest,
-            use_container_width=True,
-            hide_index=True
-        )
+        st.subheader("Test-Period Performance")
+        show_table(backtest)
 
     if wealth is not None:
-
-        wealth = wealth.copy()
-
-        wealth["date"] = pd.to_datetime(
-            wealth["date"]
-        )
-
-        plot_columns = [
-            col
-            for col in wealth.columns
-            if col != "date"
-        ]
-
-        plot_data = wealth[
-            ["date"] + plot_columns
-        ].melt(
-            id_vars="date",
-            var_name="Strategy",
-            value_name="Wealth"
-        )
-
-        fig = px.line(
-            plot_data,
-            x="date",
-            y="Wealth",
-            color="Strategy",
-            title="Out-of-Sample Cumulative Wealth"
-        )
-
-        fig.add_hline(
-            y=100,
-            line_dash="dash"
-        )
-
-        fig.update_layout(
-            height=500
-        )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
+        show_figure(wealth_chart(wealth, "Out-of-Sample Cumulative Wealth"))
 
     st.info(
-        """
-        The test period is kept completely separate from
-        the portfolio optimization stage to evaluate
-        out-of-sample performance.
-        """
+        "The test period is kept completely separate from the portfolio "
+        "optimization stage to evaluate out-of-sample performance."
     )
 
 
@@ -624,69 +488,17 @@ elif page == "🧪 Backtesting":
 
 elif page == "🌍 Benchmark":
 
-    st.header(
-        "NIFTY 50 Benchmark Comparison"
-    )
+    st.header("NIFTY 50 Benchmark Comparison")
 
-    benchmark = data.get(
-        "benchmark_adjusted_results.csv"
-    )
-
-    wealth = data.get(
-        "benchmark_adjusted_wealth.csv"
-    )
+    benchmark = get("benchmark_adjusted_results.csv")
+    wealth = get("benchmark_adjusted_wealth.csv")
 
     if benchmark is not None:
-
-        st.subheader(
-            "Common-Date Benchmark Comparison"
-        )
-
-        st.dataframe(
-            benchmark,
-            use_container_width=True,
-            hide_index=True
-        )
+        st.subheader("Common-Date Benchmark Comparison")
+        show_table(benchmark)
 
     if wealth is not None:
-
-        wealth = wealth.copy()
-
-        wealth["date"] = pd.to_datetime(
-            wealth["date"]
-        )
-
-        columns = [
-            col
-            for col in wealth.columns
-            if col != "date"
-        ]
-
-        plot_data = wealth[
-            ["date"] + columns
-        ].melt(
-            id_vars="date",
-            var_name="Strategy",
-            value_name="Wealth"
-        )
-
-        fig = px.line(
-            plot_data,
-            x="date",
-            y="Wealth",
-            color="Strategy",
-            title="Portfolio vs NIFTY 50"
-        )
-
-        fig.add_hline(
-            y=100,
-            line_dash="dash"
-        )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
+        show_figure(wealth_chart(wealth, "Portfolio vs NIFTY 50"))
 
 
 # ============================================================
@@ -695,91 +507,47 @@ elif page == "🌍 Benchmark":
 
 elif page == "🔄 Regime Analysis":
 
-    st.header(
-        "Market Regime Detection"
-    )
+    st.header("Market Regime Detection")
 
-    regimes = data.get(
-        "market_regimes.csv"
-    )
-
-    regime_returns = data.get(
-        "regime_strategy_test_returns.csv"
-    )
+    regimes = get("market_regimes.csv")
+    regime_returns = get("regime_strategy_test_returns.csv")
 
     if regimes is not None:
-
         regimes = regimes.copy()
+        regimes["date"] = pd.to_datetime(regimes["date"])
 
-        regimes["date"] = pd.to_datetime(
-            regimes["date"]
-        )
-
-        st.subheader(
-            "Detected Market Regimes"
-        )
+        st.subheader("Detected Market Regimes")
 
         if "regime" in regimes.columns:
-
-            regime_counts = (
-                regimes["regime"]
-                .value_counts()
-                .reset_index()
-            )
-
-            regime_counts.columns = [
-                "Regime",
-                "Observations"
-            ]
+            counts = regimes["regime"].value_counts().reset_index()
+            counts.columns = ["Regime", "Observations"]
 
             fig = px.bar(
-                regime_counts,
-                x="Regime",
-                y="Observations",
-                title="Regime Frequency"
+                counts, x="Regime", y="Observations", color="Regime",
+                color_discrete_map=REGIME_COLORS,
+                title="Regime Frequency",
             )
+            fig.update_layout(showlegend=False)
+            show_figure(fig, height=400)
 
-            st.plotly_chart(
-                fig,
-                use_container_width=True
-            )
-
-        st.dataframe(
-            regimes.tail(20),
-            use_container_width=True,
-            hide_index=True
-        )
+        st.caption("Most recent 20 observations")
+        regimes_view = regimes.tail(20).copy()
+        regimes_view["date"] = regimes_view["date"].dt.date
+        show_table(regimes_view)
 
     if regime_returns is not None:
+        st.subheader("Regime Strategy Selection")
 
-        st.subheader(
-            "Regime Strategy Selection"
-        )
-
-        selection_counts = (
-            regime_returns[
-                "Selected Strategy"
-            ]
-            .value_counts()
-            .reset_index()
-        )
-
-        selection_counts.columns = [
-            "Strategy",
-            "Observations"
-        ]
+        counts = regime_returns["Selected Strategy"].value_counts().reset_index()
+        counts.columns = ["Strategy", "Observations"]
 
         fig = px.bar(
-            selection_counts,
-            x="Strategy",
-            y="Observations",
-            title="Selected Strategy During Test Period"
+            counts, x="Strategy", y="Observations", color="Strategy",
+            color_discrete_map=STRATEGY_COLORS,
+            title="Selected Strategy During Test Period",
         )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
+        fig.update_layout(showlegend=False)
+        show_figure(fig, height=400)
 
 
 # ============================================================
@@ -788,63 +556,32 @@ elif page == "🔄 Regime Analysis":
 
 elif page == "💰 Transaction Costs":
 
-    st.header(
-        "Transaction Cost Analysis"
-    )
+    st.header("Transaction Cost Analysis")
 
-    transaction = data.get(
-        "transaction_cost_results.csv"
-    )
-
-    sensitivity = data.get(
-        "transaction_cost_sensitivity.csv"
-    )
+    transaction = get("transaction_cost_results.csv")
+    sensitivity = get("transaction_cost_sensitivity.csv")
 
     if transaction is not None:
-
-        st.subheader(
-            "Net Performance After Transaction Costs"
-        )
-
-        st.dataframe(
-            transaction,
-            use_container_width=True,
-            hide_index=True
-        )
+        st.subheader("Net Performance After Transaction Costs")
+        show_table(transaction)
 
     if sensitivity is not None:
+        st.subheader("Transaction Cost Sensitivity")
 
-        st.subheader(
-            "Transaction Cost Sensitivity"
-        )
+        strategies = list(sensitivity["Strategy"].unique())
+        selected_strategy = st.selectbox("Select strategy", strategies)
 
-        selected_strategy = st.selectbox(
-            "Select strategy",
-            sensitivity[
-                "Strategy"
-            ].unique()
-        )
-
-        selected = sensitivity[
-            sensitivity["Strategy"]
-            == selected_strategy
-        ]
+        selected = sensitivity[sensitivity["Strategy"] == selected_strategy]
 
         fig = px.line(
-            selected,
-            x="Transaction Cost (%)",
-            y="Net Total Return",
+            selected, x="Transaction Cost (%)", y="Net Total Return",
             markers=True,
-            title=(
-                "Net Total Return vs "
-                "Transaction Cost"
-            )
+            title="Net Total Return vs Transaction Cost",
         )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
+        color = STRATEGY_COLORS.get(selected_strategy, PRIMARY)
+        fig.update_traces(line_color=color, marker_color=color)
+        fig.update_layout(yaxis_tickformat=".2%")
+        show_figure(fig, height=450)
 
 
 # ============================================================
@@ -853,113 +590,63 @@ elif page == "💰 Transaction Costs":
 
 elif page == "🎲 Monte Carlo":
 
-    st.header(
-        "Monte Carlo Risk Simulation"
-    )
+    st.header("Monte Carlo Risk Simulation")
 
-    monte_carlo = data.get(
-        "monte_carlo_results.csv"
-    )
+    monte_carlo = get("monte_carlo_results.csv")
+    regime_mc = get("monte_carlo_regime_results.csv")
 
-    terminal = data.get(
-        "monte_carlo_terminal_wealth.csv"
+    # Fixed strategies and the regime-switching strategy are simulated
+    # separately; combine them so every strategy can be inspected below.
+    terminal = combine(
+        "monte_carlo_terminal_wealth.csv",
+        "monte_carlo_regime_terminal_wealth.csv",
     )
-
-    drawdowns = data.get(
-        "monte_carlo_drawdowns.csv"
-    )
-
-    regime_mc = data.get(
-        "monte_carlo_regime_results.csv"
+    drawdowns = combine(
+        "monte_carlo_drawdowns.csv",
+        "monte_carlo_regime_drawdowns.csv",
     )
 
     if monte_carlo is not None:
-
-        st.subheader(
-            "Fixed Portfolio Simulation"
-        )
-
-        st.dataframe(
-            monte_carlo,
-            use_container_width=True,
-            hide_index=True
-        )
+        st.subheader("Fixed Portfolio Simulation")
+        show_table(monte_carlo)
 
     if regime_mc is not None:
-
-        st.subheader(
-            "Regime-Switching Monte Carlo"
-        )
-
-        st.dataframe(
-            regime_mc,
-            use_container_width=True,
-            hide_index=True
-        )
+        st.subheader("Regime-Switching Monte Carlo")
+        show_table(regime_mc)
 
     if terminal is not None:
+        st.subheader("Terminal Wealth Distribution")
 
-        selected_strategy = st.selectbox(
-            "Terminal wealth strategy",
-            terminal[
-                "Strategy"
-            ].unique()
+        strategy = st.selectbox(
+            "Terminal wealth strategy", list(terminal["Strategy"].unique())
         )
-
-        selected_terminal = terminal[
-            terminal["Strategy"]
-            == selected_strategy
-        ]
+        subset = terminal[terminal["Strategy"] == strategy]
 
         fig = px.histogram(
-            selected_terminal,
-            x="Terminal Wealth",
-            nbins=60,
-            title=(
-                "Monte Carlo Terminal Wealth "
-                "Distribution"
-            )
+            subset, x="Terminal Wealth", nbins=60,
+            color_discrete_sequence=[STRATEGY_COLORS.get(strategy, PRIMARY)],
+            title="Monte Carlo Terminal Wealth Distribution",
         )
-
-        fig.add_vline(
-            x=100,
-            line_dash="dash",
-            annotation_text="Initial Wealth"
-        )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
+        fig.add_vline(x=100, line_dash="dash", line_color=TEXT,
+                      annotation_text="Initial Wealth")
+        fig.update_layout(bargap=0.03)
+        show_figure(fig, height=450)
 
     if drawdowns is not None:
+        st.subheader("Maximum Drawdown Distribution")
 
-        selected_strategy_dd = st.selectbox(
-            "Maximum drawdown strategy",
-            drawdowns[
-                "Strategy"
-            ].unique()
+        strategy_dd = st.selectbox(
+            "Maximum drawdown strategy", list(drawdowns["Strategy"].unique())
         )
-
-        selected_drawdowns = drawdowns[
-            drawdowns["Strategy"]
-            == selected_strategy_dd
-        ]
+        subset = drawdowns[drawdowns["Strategy"] == strategy_dd]
 
         fig = px.histogram(
-            selected_drawdowns,
-            x="Maximum Drawdown",
-            nbins=60,
-            title=(
-                "Monte Carlo Maximum "
-                "Drawdown Distribution"
-            )
+            subset, x="Maximum Drawdown", nbins=60,
+            color_discrete_sequence=[STRATEGY_COLORS.get(strategy_dd, PRIMARY)],
+            title="Monte Carlo Maximum Drawdown Distribution",
         )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
+        fig.update_layout(bargap=0.03, xaxis_tickformat=".0%")
+        show_figure(fig, height=450)
 
 
 # ============================================================
@@ -968,172 +655,66 @@ elif page == "🎲 Monte Carlo":
 
 elif page == "🤖 AI Recommendation":
 
-    st.header(
-        "Integrated Portfolio Recommendation"
-    )
+    st.header("Integrated Portfolio Recommendation")
 
-    recommendation = data.get(
-        "final_recommendation_results.csv"
-    )
+    recommendation = get("final_recommendation_results.csv")
 
     if recommendation is None:
-
-        st.error(
-            "Final recommendation results were not found."
-        )
-
+        st.error("Final recommendation results were not found.")
     else:
+        row = recommended_row(recommendation)
 
-        recommended = recommendation[
-            recommendation["Recommended"] == True
-        ]
-
-        if len(recommended) > 0:
-
-            row = recommended.iloc[0]
-
-            st.success(
-                f"Recommended Strategy: "
-                f"{row['Strategy']}"
-            )
+        if row is not None:
+            st.success(f"Recommended Strategy: {row['Strategy']}")
 
             col1, col2, col3 = st.columns(3)
+            col1.metric("Integrated Score", f"{row['Final Score']:.4f}")
+            col2.metric("Risk Profile", row["Risk Profile"])
+            col3.metric("Recommendation", "Selected")
 
-            with col1:
+            st.subheader("Evidence Summary")
+            st.write(row["Evidence Summary"])
 
-                st.metric(
-                    "Integrated Score",
-                    f"{row['Final Score']:.4f}"
-                )
+        st.subheader("Strategy Comparison")
 
-            with col2:
-
-                st.metric(
-                    "Risk Profile",
-                    row["Risk Profile"]
-                )
-
-            with col3:
-
-                st.metric(
-                    "Recommendation",
-                    "Selected"
-                )
-
-            st.subheader(
-                "Evidence Summary"
-            )
-
-            st.write(
-                row["Evidence Summary"]
-            )
-
-        st.subheader(
-            "Strategy Comparison"
-        )
-
-        score_columns = [
-            "Strategy",
+        criteria = [
             "Backtest Score",
             "Benchmark Score",
             "Transaction Cost Score",
             "Monte Carlo Score",
             "Downside Risk Score",
-            "Final Score"
         ]
 
-        st.dataframe(
-            recommendation[
-                score_columns
-            ],
-            use_container_width=True,
-            hide_index=True
-        )
+        show_table(recommendation[["Strategy"] + criteria + ["Final Score"]])
 
-        # ----------------------------------------------------
-        # Score visualization
-        # ----------------------------------------------------
-
-        score_data = recommendation[
-            [
-                "Strategy",
-                "Backtest Score",
-                "Benchmark Score",
-                "Transaction Cost Score",
-                "Monte Carlo Score",
-                "Downside Risk Score"
-            ]
-        ].melt(
-            id_vars="Strategy",
-            var_name="Criterion",
-            value_name="Score"
+        score_data = recommendation[["Strategy"] + criteria].melt(
+            id_vars="Strategy", var_name="Criterion", value_name="Score"
         )
 
         fig = px.bar(
-            score_data,
-            x="Strategy",
-            y="Score",
-            color="Criterion",
-            barmode="group",
-            title="Integrated Evidence Scores"
+            score_data, x="Strategy", y="Score", color="Criterion",
+            barmode="group", color_discrete_sequence=COLORWAY,
+            title="Integrated Evidence Scores",
         )
+        fig.update_layout(legend_title_text="")
+        show_figure(fig, height=550)
 
-        fig.update_layout(
-            height=550
-        )
+        st.subheader("Decision Framework")
 
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-        st.subheader(
-            "Decision Framework"
-        )
-
-        framework = pd.DataFrame({
+        # Keep in sync with WEIGHTS in ai_engine/final_recommendation.py
+        show_table(pd.DataFrame({
             "Evidence Category": [
                 "Out-of-Sample Backtest",
                 "Benchmark Comparison",
                 "Transaction Costs",
                 "Monte Carlo Simulation",
-                "Downside Risk"
+                "Downside Risk",
             ],
-            "Weight": [
-                "25%",
-                "15%",
-                "15%",
-                "25%",
-                "20%"
-            ]
-        })
-
-        st.dataframe(
-            framework,
-            use_container_width=True,
-            hide_index=True
-        )
+            "Weight": ["25%", "15%", "15%", "25%", "20%"],
+        }))
 
         st.info(
-            """
-            The recommendation is generated from an
-            interpretable weighted multi-criteria decision
-            framework. It should be understood as decision
-            support rather than a guarantee of future returns.
-            """
+            "The recommendation is generated from an interpretable weighted "
+            "multi-criteria decision framework. It should be understood as "
+            "decision support rather than a guarantee of future returns."
         )
-
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.sidebar.markdown("---")
-
-st.sidebar.caption(
-    "AI Portfolio Management System | M.Sc. Statistics"
-)
-
-st.sidebar.caption(
-    "For research and educational use."
-)

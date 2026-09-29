@@ -25,6 +25,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from theme import STRATEGY_COLORS, PRIMARY, CORAL, TEXT, apply_matplotlib_theme
+
+apply_matplotlib_theme()
+
 
 # ============================================================
 # PATHS
@@ -105,15 +109,17 @@ def plot_terminal_wealth(
         plt.hist(
             data,
             bins=60,
-            alpha=0.35,
+            alpha=0.55,
             density=True,
-            label=strategy
+            label=strategy,
+            color=STRATEGY_COLORS.get(strategy)
         )
 
     plt.axvline(
         100,
         linestyle="--",
         linewidth=2,
+        color=TEXT,
         label="Initial Wealth = 100"
     )
 
@@ -183,15 +189,17 @@ def plot_drawdown_distribution(
         plt.hist(
             data * 100,
             bins=60,
-            alpha=0.35,
+            alpha=0.55,
             density=True,
-            label=strategy
+            label=strategy,
+            color=STRATEGY_COLORS.get(strategy)
         )
 
     plt.axvline(
         0,
         linestyle="--",
-        linewidth=2
+        linewidth=2,
+        color=TEXT
     )
 
     plt.title(
@@ -270,14 +278,16 @@ def plot_probability_of_loss(
         x - width / 2,
         plot_data["Probability of Loss"],
         width,
-        label="Probability of Loss"
+        label="Probability of Loss",
+        color=PRIMARY
     )
 
     plt.bar(
         x + width / 2,
         plot_data["Probability of Loss > 10%"],
         width,
-        label="Probability of Loss > 10%"
+        label="Probability of Loss > 10%",
+        color=CORAL
     )
 
     plt.xticks(

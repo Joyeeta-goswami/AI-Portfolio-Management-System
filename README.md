@@ -323,6 +323,8 @@ This is the output of the stated decision framework, not a guarantee of future p
 
 ## Streamlit Dashboard
 
+The dashboard uses a dark "Midnight & Teal" theme. Base colours are set in `.streamlit/config.toml`; chart and figure colours come from one shared palette in `theme.py`, so changing a colour there updates the dashboard, the Plotly charts and the saved Matplotlib figures together.
+
 The project includes an interactive Streamlit dashboard with:
 
 ```text
@@ -362,7 +364,11 @@ python -m venv venv
 Install dependencies:
 
 ```powershell
+# Dashboard only
 python -m pip install -r requirements.txt
+
+# Dashboard + everything needed to re-run the research pipeline
+python -m pip install -r requirements-research.txt
 ```
 
 ## Suggested Execution Order
@@ -429,10 +435,14 @@ AI-Portfolio-Management-System/
 │   ├── monte_carlo_plots.py
 │   └── outputs/
 │
+├── .streamlit/
+│   └── config.toml
 ├── app.py
+├── theme.py
 ├── config/
 │   └── config.yaml
 ├── requirements.txt
+├── requirements-research.txt
 └── README.md
 ```
 

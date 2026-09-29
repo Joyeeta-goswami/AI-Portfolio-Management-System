@@ -1,10 +1,11 @@
-from unittest import result
-
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from scipy.optimize import minimize
-import plotly.express as px
+
+from theme import PLOTLY_TEMPLATE_NAME, PRIMARY, BLUE, AMBER, register_plotly_template
+
+register_plotly_template()
 
 class MarkowitzOptimizer:
     """
@@ -332,26 +333,6 @@ class MarkowitzOptimizer:
     })
 
         return frontier
-    def plot_efficient_frontier(self, frontier):
-        """
-        Plot the Efficient Frontier.
-        """
-
-        fig = px.line(
-        frontier,
-        x="Risk",
-        y="Return",
-        title="Efficient Frontier",
-        markers=True
-    )
-
-        fig.update_layout(
-        xaxis_title="Annual Risk (Volatility)",
-        yaxis_title="Expected Annual Return",
-        template="plotly_white"
-    )
-
-        fig.show()
     def plot_efficient_frontier(
     self,
     frontier,
@@ -424,6 +405,7 @@ class MarkowitzOptimizer:
             y=frontier["Return"],
             mode="lines+markers",
             name="Efficient Frontier",
+            line=dict(color=AMBER),
             text=[
                 f"Return: {r:.2%}<br>"
                 f"Risk: {risk:.2%}<br>"
@@ -447,7 +429,8 @@ class MarkowitzOptimizer:
             name="Maximum Sharpe",
             marker=dict(
                 size=16,
-                symbol="star"
+                symbol="star",
+                color=PRIMARY
             ),
             text=[
                 f"Maximum Sharpe Portfolio<br>"
@@ -468,7 +451,8 @@ class MarkowitzOptimizer:
             name="Minimum Variance",
             marker=dict(
                 size=16,
-                symbol="star"
+                symbol="star",
+                color=BLUE
             ),
             text=[
                 f"Minimum Variance Portfolio<br>"
@@ -488,7 +472,7 @@ class MarkowitzOptimizer:
         title="Markowitz Efficient Frontier",
         xaxis_title="Annual Risk (Volatility)",
         yaxis_title="Expected Annual Return",
-        template="plotly_white",
+        template=PLOTLY_TEMPLATE_NAME,
         hovermode="closest"
     )
 

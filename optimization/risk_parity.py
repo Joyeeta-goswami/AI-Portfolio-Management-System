@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from requests.packages import target
 from scipy.optimize import minimize
 
 

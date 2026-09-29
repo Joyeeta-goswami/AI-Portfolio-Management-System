@@ -335,12 +335,6 @@ def calculate_benchmark_score(
     # Benchmark-relative return
     # --------------------------------------------------------
 
-    # Extract NIFTY row if available
-    nifty_row = benchmark[
-        benchmark["Strategy"].str.upper()
-        == "NIFTY 50"
-    ]
-
     strategy_rows = benchmark[
         benchmark["Strategy"].isin(
             STRATEGIES
